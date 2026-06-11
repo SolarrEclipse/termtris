@@ -1,11 +1,39 @@
-use std::{io::{Write, stdout}, time::Duration};
+use std::{
+    io::{Stdout, Write, stdout},
+    time::Duration,
+    vec,
+};
 
-use crossterm::{cursor, event::{self, Event::{self, Key}, KeyCode}, execute, style::Print, terminal::{self, EnterAlternateScreen, LeaveAlternateScreen}};
+use crossterm::{
+    cursor,
+    event::{
+        self,
+        Event::{self},
+        KeyCode,
+    },
+    execute,
+    style::Print,
+    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+};
+
+struct Grid {
+    height: u16,
+    width: u16,
+    cells: Vec<Vec<(u8)>>,
+}
+
+impl Grid {
+    fn new(width: u16, height: u16) -> Self {
+        Self {width, height, cells: vec![vec![0u8; width.into()]; height.into()]}
+    }
+}
 
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
 
     let mut stdout = stdout();
+    let mut grid = Grid::new(10, 20);
+
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
 
     loop {
@@ -17,24 +45,27 @@ fn main() -> std::io::Result<()> {
             }
         }
 
-        execute!(
-            stdout,
-            cursor::MoveTo(0, 0),
-            terminal::Clear(terminal::ClearType::All),
-            Print("Welcome to Terminaltris"),
-            cursor::MoveTo(0, 1),
-            Print("Press q to quit")
-        )?;
         stdout.flush()?;
     }
 
-    execute!(
-        stdout,
-        LeaveAlternateScreen,
-        cursor::Show
-    )?;
-
-
+    execute!(stdout, LeaveAlternateScreen, cursor::Show)?;
+    draw_grid(&mut stdout, &mut grid);
 
     Ok(())
+}
+
+fn draw_grid(stdout: &mut Stdout, grid: &mut Grid) {
+    let vert_border = '│';
+    let bot_left_corner = '└';
+    let bot_border = '─';
+    let bot_right_corner = '┘';
+
+    let grid_width = 10;
+    let grid_height = 20;
+
+    for (y, row) in grid.iter().enumerate() {
+        for (x, cell) in row.iter().enumerate() {
+            println!("{}, {:?}, {}, {:?}", y, row, x, cell);
+        }
+    }
 }
