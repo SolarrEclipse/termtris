@@ -97,6 +97,31 @@ impl Grid {
         }
     }
 
+    fn hits_wall(&self, active: &ActiveTetromino, next_x: i32, next_rotation: usize) -> bool {
+        for (block_x, _) in active.kind.blocks(next_rotation) {
+            let x = next_x + block_x;
+
+            if x < 0 || x >= self.width.into() {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn generate_ghost(&self, active: Option<&ActiveTetromino>) -> Option<ActiveTetromino> {
+        let active = active?;
+
+        let mut ghost = *active;
+
+        for y in 0..self.height {
+            if !self.is_valid_position(&ghost, ghost.x, ghost.y + y as i32, ghost.rotation) {
+                ghost.y += y as i32 - 1;
+                return Some(ghost);
+            }
+        }
+        None
+    }
+
     fn draw(&self, stdout: &mut Stdout, active: Option<&ActiveTetromino>) -> std::io::Result<()> {
         let (term_width, term_height) = terminal::size()?;
         let board_height = self.height * CELL_HEIGHT + 1;
@@ -112,18 +137,25 @@ impl Grid {
         let cells_left = board_left + 1;
         let cells_top = board_top + 1;
 
+        let ghost = self.generate_ghost(active);
+
         for y in 0..self.height {
             for x in 0..self.width {
                 let terminal_x = cells_left + x * CELL_WIDTH;
                 let terminal_y = cells_top + y * CELL_HEIGHT;
 
-                let visible_cell = self
-                    .active_tet_at(active, x, y)
-                    .or(self.cells[y as usize][x as usize]);
+                let active_cell = self.active_tet_at(active, x, y);
+                let locked_cell = self.cells[y as usize][x as usize];
+                let ghost_cell = self.active_tet_at(ghost.as_ref(), x, y);
 
-                let (tile, color) = match visible_cell {
-                    Some(kind) => (TET_BLOCK, kind.color()),
-                    None => ("  ", Color::Rgb { r: 0, g: 0, b: 0 }),
+                let (color, tile) = if let Some(kind) = active_cell {
+                    (kind.color(), TET_BLOCK)
+                } else if let Some(kind) = locked_cell {
+                    (kind.color(), TET_BLOCK)
+                } else if let Some(_kind) = ghost_cell {
+                    (Color::DarkGrey, TET_BLOCK)
+                } else {
+                    (Color::Rgb { r: 0, g: 0, b: 0 }, "  ")
                 };
 
                 if x == border_left {
@@ -282,6 +314,7 @@ impl Tetromino {
     }
 }
 
+#[derive(Clone, Copy)]
 struct ActiveTetromino {
     kind: TetrominoKind,
     x: i32,
@@ -313,6 +346,7 @@ impl ActiveTetromino {
     }
 
     fn rotate(&mut self, grid: &Grid, dir: RotationDirection) {
+        let kicks = [1, -1, 2, -1];
         let next_rotation = match dir {
             RotationDirection::Left => (self.rotation + 3) % 4,
             RotationDirection::Right => (self.rotation + 1) % 4,
@@ -320,6 +354,18 @@ impl ActiveTetromino {
 
         if grid.is_valid_position(self, self.x, self.y, next_rotation) {
             self.rotation = next_rotation;
+        }
+
+        if !grid.hits_wall(self, self.x, next_rotation) {
+            return;
+        }
+
+        for dx in kicks {
+            if grid.is_valid_position(self, self.x + dx, self.y, next_rotation) {
+                self.x += dx;
+                self.rotation = next_rotation;
+                return;
+            }
         }
     }
 
@@ -394,6 +440,9 @@ fn main() -> std::io::Result<()> {
             if !active.move_down(&grid) {
                 grid.lock_piece(&active);
                 active.slot(&mut bag);
+                if !grid.is_valid_position(&active, active.x, active.y, active.rotation) {
+                    break;
+                }
             }
             last_drop = Instant::now();
         }
@@ -407,9 +456,13 @@ fn main() -> std::io::Result<()> {
                         if !active.move_down(&grid) {
                             grid.lock_piece(&active);
                             active.slot(&mut bag);
+                            if !grid.is_valid_position(&active, active.x, active.y, active.rotation)
+                            {
+                                break;
+                            }
                         }
                         last_drop = Instant::now();
-                    },
+                    }
                     KeyCode::Char('a') => active.rotate(&grid, RotationDirection::Left),
                     KeyCode::Char('d') => active.rotate(&grid, RotationDirection::Right),
                     KeyCode::Char(' ') => todo!(),
