@@ -1,7 +1,6 @@
 use std::{
     io::{Stdout, Write, stdout},
-    range::Range,
-    time::Duration,
+    time::{Duration, Instant},
     vec,
 };
 
@@ -32,7 +31,7 @@ struct Grid {
 
 impl Grid {
     fn new(width: u16, height: u16) -> Self {
-        let mut cells = vec![vec![None; width.into()]; height.into()];
+        let cells = vec![vec![None; width.into()]; height.into()];
 
         Self {
             width,
@@ -49,7 +48,7 @@ impl Grid {
     ) -> Option<TetrominoKind> {
         let active = active?;
 
-        for (block_x, block_y) in active.kind.blocks() {
+        for (block_x, block_y) in active.blocks() {
             let board_x = active.x + block_x;
             let board_y = active.y + block_y;
 
@@ -58,6 +57,44 @@ impl Grid {
             }
         }
         None
+    }
+
+    fn is_valid_position(
+        &self,
+        active: &ActiveTetromino,
+        next_x: i32,
+        next_y: i32,
+        next_rotation: usize,
+    ) -> bool {
+        for (block_x, block_y) in active.kind.blocks(next_rotation) {
+            let x = next_x + block_x;
+            let y = next_y + block_y;
+
+            if x < 0 || x >= self.width as i32 {
+                return false;
+            }
+
+            if y >= self.height as i32 {
+                return false;
+            }
+
+            if y >= 0 && self.cells[y as usize][x as usize].is_some() {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn lock_piece(&mut self, active: &ActiveTetromino) {
+        for (block_x, block_y) in active.blocks() {
+            let x = active.x + block_x;
+            let y = active.y + block_y;
+
+            if y >= 0 {
+                self.cells[y as usize][x as usize] = Some(active.kind);
+            }
+        }
     }
 
     fn draw(&self, stdout: &mut Stdout, active: Option<&ActiveTetromino>) -> std::io::Result<()> {
@@ -191,15 +228,40 @@ impl TetrominoKind {
         }
     }
 
-    fn blocks(&self) -> [(i32, i32); 4] {
-        match self {
-            TetrominoKind::I => [(0, 1), (1, 1), (2, 1), (3, 1)],
-            TetrominoKind::O => [(1, 0), (2, 0), (1, 1), (2, 1)],
-            TetrominoKind::T => [(1, 0), (0, 1), (1, 1), (2, 1)],
-            TetrominoKind::S => [(1, 0), (2, 0), (0, 1), (1, 1)],
-            TetrominoKind::Z => [(0, 0), (1, 0), (1, 1), (2, 1)],
-            TetrominoKind::J => [(0, 0), (0, 1), (1, 1), (2, 1)],
-            TetrominoKind::L => [(2, 0), (0, 1), (1, 1), (2, 1)],
+    fn blocks(&self, rotation: usize) -> [(i32, i32); 4] {
+        match (self, rotation % 4) {
+            (TetrominoKind::I, 0) => [(0, 1), (1, 1), (2, 1), (3, 1)],
+            (TetrominoKind::I, 1) => [(2, 0), (2, 1), (2, 2), (2, 3)],
+            (TetrominoKind::I, 2) => [(0, 2), (1, 2), (2, 2), (3, 2)],
+            (TetrominoKind::I, 3) => [(1, 0), (1, 1), (1, 2), (1, 3)],
+
+            (TetrominoKind::O, _) => [(1, 0), (2, 0), (1, 1), (2, 1)],
+
+            (TetrominoKind::T, 0) => [(0, 0), (1, 0), (2, 0), (1, 1)],
+            (TetrominoKind::T, 1) => [(1, 0), (0, 1), (1, 1), (1, 2)],
+            (TetrominoKind::T, 2) => [(1, 0), (0, 1), (1, 1), (2, 1)],
+            (TetrominoKind::T, 3) => [(0, 0), (0, 1), (1, 1), (0, 2)],
+
+            (TetrominoKind::S, 0) => [(1, 0), (2, 0), (0, 1), (1, 1)],
+            (TetrominoKind::S, 1) => [(0, 0), (0, 1), (1, 1), (1, 2)],
+            (TetrominoKind::S, 2) => [(1, 1), (2, 1), (0, 2), (1, 2)],
+            (TetrominoKind::S, 3) => [(1, 0), (1, 1), (2, 1), (2, 2)],
+
+            (TetrominoKind::Z, 0) => [(0, 0), (1, 0), (1, 1), (2, 1)],
+            (TetrominoKind::Z, 1) => [(1, 0), (0, 1), (1, 1), (0, 2)],
+            (TetrominoKind::Z, 2) => [(0, 1), (1, 1), (1, 2), (2, 2)],
+            (TetrominoKind::Z, 3) => [(2, 0), (1, 1), (2, 1), (1, 2)],
+
+            (TetrominoKind::J, 0) => [(0, 0), (0, 1), (1, 1), (2, 1)],
+            (TetrominoKind::J, 1) => [(0, 0), (1, 0), (0, 1), (0, 2)],
+            (TetrominoKind::J, 2) => [(0, 0), (1, 0), (2, 0), (2, 1)],
+            (TetrominoKind::J, 3) => [(1, 0), (1, 1), (0, 2), (1, 2)],
+
+            (TetrominoKind::L, 0) => [(2, 0), (0, 1), (1, 1), (2, 1)],
+            (TetrominoKind::L, 1) => [(0, 0), (0, 1), (0, 2), (1, 2)],
+            (TetrominoKind::L, 2) => [(0, 0), (1, 0), (2, 0), (0, 1)],
+            (TetrominoKind::L, 3) => [(0, 0), (1, 0), (1, 1), (1, 2)],
+            _ => unreachable!(),
         }
     }
 }
@@ -214,7 +276,7 @@ impl Tetromino {
     fn new(kind: TetrominoKind) -> Self {
         Self {
             color: kind.color(),
-            blocks: kind.blocks(),
+            blocks: kind.blocks(0),
             kind: kind,
         }
     }
@@ -224,6 +286,12 @@ struct ActiveTetromino {
     kind: TetrominoKind,
     x: i32,
     y: i32,
+    rotation: usize,
+}
+
+enum RotationDirection {
+    Left,
+    Right,
 }
 
 impl ActiveTetromino {
@@ -232,6 +300,47 @@ impl ActiveTetromino {
             kind: tet.kind,
             x: 3,
             y: 0,
+            rotation: 0,
+        }
+    }
+
+    fn slot(&mut self, bag: &mut TetrominoBag) {
+        *self = ActiveTetromino::from(bag.spawn());
+    }
+
+    fn blocks(&self) -> [(i32, i32); 4] {
+        self.kind.blocks(self.rotation)
+    }
+
+    fn rotate(&mut self, grid: &Grid, dir: RotationDirection) {
+        let next_rotation = match dir {
+            RotationDirection::Left => (self.rotation + 3) % 4,
+            RotationDirection::Right => (self.rotation + 1) % 4,
+        };
+
+        if grid.is_valid_position(self, self.x, self.y, next_rotation) {
+            self.rotation = next_rotation;
+        }
+    }
+
+    fn move_left(&mut self, grid: &Grid) {
+        if grid.is_valid_position(self, self.x - 1, self.y, self.rotation) {
+            self.x -= 1;
+        }
+    }
+
+    fn move_right(&mut self, grid: &Grid) {
+        if grid.is_valid_position(self, self.x + 1, self.y, self.rotation) {
+            self.x += 1;
+        }
+    }
+
+    fn move_down(&mut self, grid: &Grid) -> bool {
+        if grid.is_valid_position(self, self.x, self.y + 1, self.rotation) {
+            self.y += 1;
+            true
+        } else {
+            false
         }
     }
 }
@@ -254,53 +363,67 @@ impl TetrominoBag {
             ],
         }
     }
-}
 
-struct Game {
-    grid: Grid,
-    active: ActiveTetromino,
+    fn spawn(&mut self) -> Tetromino {
+        if self.pieces.is_empty() {
+            *self = TetrominoBag::new();
+        }
+
+        let selector = rand::random_range(0..self.pieces.len());
+        self.pieces.remove(selector)
+    }
 }
 
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
 
     let mut stdout = stdout();
+    let drop_interval = Duration::from_millis(1500);
+    let mut last_drop = Instant::now();
 
-    let grid = Grid::new(10, 20);
+    let mut grid = Grid::new(10, 20);
     let mut bag = TetrominoBag::new();
 
-    let tetromino = spawn_from_bag(&mut bag);
+    let tetromino = bag.spawn();
     let mut active = ActiveTetromino::from(tetromino);
 
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
 
     loop {
-        grid.draw(&mut stdout, Some(&active))?;
-        stdout.flush()?;
+        if last_drop.elapsed() > drop_interval {
+            if !active.move_down(&grid) {
+                grid.lock_piece(&active);
+                active.slot(&mut bag);
+            }
+            last_drop = Instant::now();
+        }
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
+                    KeyCode::Left => active.move_left(&grid),
+                    KeyCode::Right => active.move_right(&grid),
+                    KeyCode::Down => {
+                        if !active.move_down(&grid) {
+                            grid.lock_piece(&active);
+                            active.slot(&mut bag);
+                        }
+                        last_drop = Instant::now();
+                    },
+                    KeyCode::Char('a') => active.rotate(&grid, RotationDirection::Left),
+                    KeyCode::Char('d') => active.rotate(&grid, RotationDirection::Right),
+                    KeyCode::Char(' ') => todo!(),
                     KeyCode::Char('q') => break,
-                    KeyCode::Left => active.x -= 1,
-                    KeyCode::Right => active.x += 1,
-                    KeyCode::Down => active.y += 1,
                     _ => {}
                 }
             }
         }
+
+        grid.draw(&mut stdout, Some(&active))?;
+        stdout.flush()?;
     }
 
     execute!(stdout, LeaveAlternateScreen, cursor::Show)?;
 
     Ok(())
-}
-
-fn spawn_from_bag(bag: &mut TetrominoBag) -> Tetromino {
-    if bag.pieces.is_empty() {
-        *bag = TetrominoBag::new();
-    }
-
-    let selector = rand::random_range(0..bag.pieces.len());
-    bag.pieces.remove(selector)
 }
