@@ -1,5 +1,6 @@
 use std::{
     io::{Stdout, Write, stdout},
+    range::Range,
     time::Duration,
     vec,
 };
@@ -18,20 +19,20 @@ use crossterm::{
 
 const CELL_WIDTH: u16 = 2;
 const CELL_HEIGHT: u16 = 1;
+const LOWER_BORDER: &str = "▀";
+const UPPER_BORDER: &str = "▄";
+const VERT_BORDER: &str = "█";
+const TET_BLOCK: &str = "██";
 
 struct Grid {
     width: u16,
     height: u16,
-    cells: Vec<Vec<u8>>,
+    cells: Vec<Vec<Option<TetrominoKind>>>,
 }
 
 impl Grid {
     fn new(width: u16, height: u16) -> Self {
-        let mut cells = vec![vec![0u8; width.into()]; height.into()];
-
-        for x in 0..width.min(7) {
-            cells[0][x as usize] = (x + 1) as u8;
-        }
+        let mut cells = vec![vec![None; width.into()]; height.into()];
 
         Self {
             width,
@@ -40,7 +41,26 @@ impl Grid {
         }
     }
 
-    fn draw(&self, stdout: &mut Stdout) -> std::io::Result<()> {
+    fn active_tet_at(
+        &self,
+        active: Option<&ActiveTetromino>,
+        x: u16,
+        y: u16,
+    ) -> Option<TetrominoKind> {
+        let active = active?;
+
+        for (block_x, block_y) in active.kind.blocks() {
+            let board_x = active.x + block_x;
+            let board_y = active.y + block_y;
+
+            if board_x == x as i32 && board_y == y as i32 {
+                return Some(active.kind);
+            }
+        }
+        None
+    }
+
+    fn draw(&self, stdout: &mut Stdout, active: Option<&ActiveTetromino>) -> std::io::Result<()> {
         let (term_width, term_height) = terminal::size()?;
         let board_height = self.height * CELL_HEIGHT + 1;
         let board_width = self.width * CELL_WIDTH + 2;
@@ -59,25 +79,21 @@ impl Grid {
             for x in 0..self.width {
                 let terminal_x = cells_left + x * CELL_WIDTH;
                 let terminal_y = cells_top + y * CELL_HEIGHT;
-                let cell = self.cells[y as usize][x as usize];
 
-                let tile = if cell != 0 { "[]" } else { "  " };
-                // let color = match cell {
-                //     1 => Color::Rgb { r: 91, g: 206, b: 250 },
-                //     2 => Color::Rgb { r: 92, g: 124, b: 250 },
-                //     3 => Color::Rgb { r: 250, g: 222, b: 91 },
-                //     4 => Color::Rgb { r: 94, g: 214, b: 137 },
-                //     5 => Color::Rgb { r: 190, g: 126, b: 240 },
-                //     6 => Color::Rgb { r: 240, g: 96, b: 113 },
-                //     7 => Color::Rgb { r: 245, g: 163, b: 89 },
-                //     _ => Color::Rgb { r: 210, g: 216, b: 224 },
-                // };
+                let visible_cell = self
+                    .active_tet_at(active, x, y)
+                    .or(self.cells[y as usize][x as usize]);
+
+                let (tile, color) = match visible_cell {
+                    Some(kind) => (TET_BLOCK, kind.color()),
+                    None => ("  ", Color::Rgb { r: 0, g: 0, b: 0 }),
+                };
 
                 if x == border_left {
                     queue!(
                         stdout,
                         MoveTo(terminal_x - 1 + start_x, terminal_y + start_y),
-                        Print("|")
+                        Print(VERT_BORDER)
                     )?;
                 }
 
@@ -85,34 +101,35 @@ impl Grid {
                     queue!(
                         stdout,
                         MoveTo(terminal_x + CELL_WIDTH + start_x, terminal_y + start_y),
-                        Print("|")
+                        Print(VERT_BORDER)
                     )?;
                 }
 
                 if y == self.height - 1 {
-                    queue!(
-                        stdout,
-                        MoveTo(terminal_x + start_x, terminal_y + CELL_HEIGHT + start_y),
-                        Print("##")
-                    )?;
-                    queue!(
-                        stdout,
-                        MoveTo(terminal_x - 1 + start_x, terminal_y + CELL_HEIGHT + start_y),
-                        Print("#")
-                    )?;
-                    queue!(
-                        stdout,
-                        MoveTo(
-                            terminal_x + CELL_WIDTH + start_x,
-                            terminal_y + CELL_HEIGHT + start_y
-                        ),
-                        Print("#")
-                    )?;
+                    if x == border_left {
+                        queue!(
+                            stdout,
+                            MoveTo(terminal_x - 1 + start_x, terminal_y + CELL_HEIGHT + start_y),
+                            Print([LOWER_BORDER, LOWER_BORDER, LOWER_BORDER].concat())
+                        )?;
+                    } else if x == self.width - 1 {
+                        queue!(
+                            stdout,
+                            MoveTo(terminal_x + start_x, terminal_y + CELL_HEIGHT + start_y),
+                            Print([LOWER_BORDER, LOWER_BORDER, LOWER_BORDER].concat())
+                        )?;
+                    } else {
+                        queue!(
+                            stdout,
+                            MoveTo(terminal_x + start_x, terminal_y + CELL_HEIGHT + start_y),
+                            Print([LOWER_BORDER, LOWER_BORDER].concat())
+                        )?;
+                    }
                 }
                 queue!(
                     stdout,
                     MoveTo(terminal_x + start_x, terminal_y + start_y),
-                    SetForegroundColor(Color::Yellow),
+                    SetForegroundColor(color),
                     Print(tile),
                     ResetColor
                 )?;
@@ -122,6 +139,7 @@ impl Grid {
     }
 }
 
+#[derive(Clone, Copy)]
 enum TetrominoKind {
     T,
     I,
@@ -197,7 +215,23 @@ impl Tetromino {
         Self {
             color: kind.color(),
             blocks: kind.blocks(),
-            kind: kind
+            kind: kind,
+        }
+    }
+}
+
+struct ActiveTetromino {
+    kind: TetrominoKind,
+    x: i32,
+    y: i32,
+}
+
+impl ActiveTetromino {
+    fn from(tet: Tetromino) -> Self {
+        Self {
+            kind: tet.kind,
+            x: 3,
+            y: 0,
         }
     }
 }
@@ -217,27 +251,41 @@ impl TetrominoBag {
                 Tetromino::new(TetrominoKind::S),
                 Tetromino::new(TetrominoKind::Z),
                 Tetromino::new(TetrominoKind::O),
-            ]
+            ],
         }
     }
+}
+
+struct Game {
+    grid: Grid,
+    active: ActiveTetromino,
 }
 
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
 
     let mut stdout = stdout();
+
     let grid = Grid::new(10, 20);
+    let mut bag = TetrominoBag::new();
+
+    let tetromino = spawn_from_bag(&mut bag);
+    let mut active = ActiveTetromino::from(tetromino);
 
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
 
     loop {
-        grid.draw(&mut stdout)?;
+        grid.draw(&mut stdout, Some(&active))?;
         stdout.flush()?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Left => active.x -= 1,
+                    KeyCode::Right => active.x += 1,
+                    KeyCode::Down => active.y += 1,
+                    _ => {}
                 }
             }
         }
@@ -246,4 +294,13 @@ fn main() -> std::io::Result<()> {
     execute!(stdout, LeaveAlternateScreen, cursor::Show)?;
 
     Ok(())
+}
+
+fn spawn_from_bag(bag: &mut TetrominoBag) -> Tetromino {
+    if bag.pieces.is_empty() {
+        *bag = TetrominoBag::new();
+    }
+
+    let selector = rand::random_range(0..bag.pieces.len());
+    bag.pieces.remove(selector)
 }
