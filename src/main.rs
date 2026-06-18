@@ -300,15 +300,11 @@ impl TetrominoKind {
 
 struct Tetromino {
     kind: TetrominoKind,
-    color: Color,
-    blocks: [(i32, i32); 4],
 }
 
 impl Tetromino {
     fn new(kind: TetrominoKind) -> Self {
         Self {
-            color: kind.color(),
-            blocks: kind.blocks(0),
             kind: kind,
         }
     }
@@ -339,6 +335,10 @@ impl ActiveTetromino {
 
     fn slot(&mut self, bag: &mut TetrominoBag) {
         *self = ActiveTetromino::from(bag.spawn());
+    }
+
+    fn fall(&mut self, grid: &Grid) {
+        while self.move_down(grid) {}
     }
 
     fn blocks(&self) -> [(i32, i32); 4] {
@@ -427,6 +427,10 @@ fn main() -> std::io::Result<()> {
     let drop_interval = Duration::from_millis(1500);
     let mut last_drop = Instant::now();
 
+    let lock_delay = Duration::from_millis(500);
+    let mut grounded_since: Option<Instant> = None;
+
+
     let mut grid = Grid::new(10, 20);
     let mut bag = TetrominoBag::new();
 
@@ -436,13 +440,23 @@ fn main() -> std::io::Result<()> {
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
 
     loop {
+        let grounded = !grid.is_valid_position(&active, active.x, active.y + 1, active.rotation);
+
+        if grounded {
+            if grounded_since.is_none() {
+                grounded_since = Some(Instant::now());
+            } 
+
+            if grounded_since.unwrap().elapsed() >= lock_delay {
+                grid.lock_piece(&active);
+                active.slot(&mut bag);
+                grounded_since = None;
+            }
+        }
         if last_drop.elapsed() > drop_interval {
             if !active.move_down(&grid) {
                 grid.lock_piece(&active);
                 active.slot(&mut bag);
-                if !grid.is_valid_position(&active, active.x, active.y, active.rotation) {
-                    break;
-                }
             }
             last_drop = Instant::now();
         }
@@ -453,19 +467,16 @@ fn main() -> std::io::Result<()> {
                     KeyCode::Left => active.move_left(&grid),
                     KeyCode::Right => active.move_right(&grid),
                     KeyCode::Down => {
-                        if !active.move_down(&grid) {
-                            grid.lock_piece(&active);
-                            active.slot(&mut bag);
-                            if !grid.is_valid_position(&active, active.x, active.y, active.rotation)
-                            {
-                                break;
-                            }
-                        }
+                        active.move_down(&grid);
                         last_drop = Instant::now();
                     }
+                    KeyCode::Char(' ') => {
+                        active.fall(&grid);
+                        grid.lock_piece(&active);
+                        active.slot(&mut bag);
+                    },
                     KeyCode::Char('a') => active.rotate(&grid, RotationDirection::Left),
                     KeyCode::Char('d') => active.rotate(&grid, RotationDirection::Right),
-                    KeyCode::Char(' ') => todo!(),
                     KeyCode::Char('q') => break,
                     _ => {}
                 }
