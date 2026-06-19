@@ -1,7 +1,5 @@
 use std::{
-    io::{Stdout, Write, stdout},
-    time::{Duration, Instant},
-    vec,
+    intrinsics::autodiff, io::{Stdout, Write, stdout}, time::{Duration, Instant}, vec
 };
 
 use crossterm::{
@@ -13,7 +11,7 @@ use crossterm::{
     },
     execute, queue,
     style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
 const CELL_WIDTH: u16 = 2;
@@ -22,6 +20,37 @@ const LOWER_BORDER: &str = "▀";
 const UPPER_BORDER: &str = "▄";
 const VERT_BORDER: &str = "█";
 const TET_BLOCK: &str = "██";
+
+struct RenderLayout {
+    cell_width: u16,
+    cell_height: u16,
+    board_start_x: u16,
+    board_start_y: u16,
+    hold_start_x: u16,
+    hold_start_y: u16,
+}
+
+impl RenderLayout {
+    fn new(term_width: u16, term_height: u16, grid_width: u16, grid_height: u16) -> Self {
+        let board_width = grid_width * CELL_WIDTH + 2;
+        let board_height = grid_height * CELL_HEIGHT + 1;
+
+        let board_start_x = term_width / 2 - board_width / 2;
+        let board_start_y = term_height / 2 - board_height / 2;
+
+        let hold_start_x = board_start_x.saturating_sub(8);
+        let hold_start_y = board_start_y;
+
+        Self {
+            cell_width: CELL_WIDTH,
+            cell_height: CELL_HEIGHT,
+            board_start_x,
+            board_start_y,
+            hold_start_x,
+            hold_start_y,
+        }
+    }
+}
 
 struct Grid {
     width: u16,
@@ -101,16 +130,16 @@ impl Grid {
         for x in 0..self.width {
             self.cells[row as usize][x as usize] = None;
         }
-
     }
 
     fn shift_row_down(&mut self, row: u16) {
         for above_row in (0..row).rev() {
             for x in 0..self.width {
                 let above = self.cells[above_row as usize][x as usize];
+                self.cells[above_row as usize][x as usize] = None;
                 self.cells[(above_row + 1) as usize][x as usize] = above;
-            } 
-        } 
+            }
+        }
     }
 
     fn destruct_lines(&mut self) {
@@ -127,9 +156,9 @@ impl Grid {
                 full_rows.push(y);
             }
         }
-        
+
         for y in full_rows {
-            self.clear_line(y); 
+            self.clear_line(y);
             self.shift_row_down(y);
         }
     }
@@ -159,17 +188,16 @@ impl Grid {
         None
     }
 
-    fn draw(&self, stdout: &mut Stdout, active: Option<&ActiveTetromino>) -> std::io::Result<()> {
-        let (term_width, term_height) = terminal::size()?;
-        let board_height = self.height * CELL_HEIGHT + 1;
-        let board_width = self.width * CELL_WIDTH + 2;
+    fn draw(
+        &self,
+        stdout: &mut Stdout,
+        active: Option<&ActiveTetromino>,
+        layout: &RenderLayout,
+    ) -> std::io::Result<()> {
         let board_left = 0;
         let board_top = 0;
 
         let border_left = board_left;
-
-        let start_y = term_height / 2 - board_height / 2;
-        let start_x = term_width / 2 - board_width / 2;
 
         let cells_left = board_left + 1;
         let cells_top = board_top + 1;
@@ -178,8 +206,8 @@ impl Grid {
 
         for y in 0..self.height {
             for x in 0..self.width {
-                let terminal_x = cells_left + x * CELL_WIDTH;
-                let terminal_y = cells_top + y * CELL_HEIGHT;
+                let terminal_x = cells_left + x * layout.cell_width;
+                let terminal_y = cells_top + y * layout.cell_height;
 
                 let active_cell = self.active_tet_at(active, x, y);
                 let locked_cell = self.cells[y as usize][x as usize];
@@ -198,7 +226,10 @@ impl Grid {
                 if x == border_left {
                     queue!(
                         stdout,
-                        MoveTo(terminal_x - 1 + start_x, terminal_y + start_y),
+                        MoveTo(
+                            terminal_x - 1 + layout.board_start_x,
+                            terminal_y + layout.board_start_y
+                        ),
                         Print(VERT_BORDER)
                     )?;
                 }
@@ -206,7 +237,10 @@ impl Grid {
                 if x == self.width - 1 {
                     queue!(
                         stdout,
-                        MoveTo(terminal_x + CELL_WIDTH + start_x, terminal_y + start_y),
+                        MoveTo(
+                            terminal_x + layout.cell_width + layout.board_start_x,
+                            terminal_y + layout.board_start_y
+                        ),
                         Print(VERT_BORDER)
                     )?;
                 }
@@ -215,32 +249,81 @@ impl Grid {
                     if x == border_left {
                         queue!(
                             stdout,
-                            MoveTo(terminal_x - 1 + start_x, terminal_y + CELL_HEIGHT + start_y),
+                            MoveTo(
+                                terminal_x - 1 + layout.board_start_x,
+                                terminal_y + layout.cell_height + layout.board_start_y
+                            ),
                             Print([LOWER_BORDER, LOWER_BORDER, LOWER_BORDER].concat())
                         )?;
                     } else if x == self.width - 1 {
                         queue!(
                             stdout,
-                            MoveTo(terminal_x + start_x, terminal_y + CELL_HEIGHT + start_y),
+                            MoveTo(
+                                terminal_x + layout.board_start_x,
+                                terminal_y + layout.cell_height + layout.board_start_y
+                            ),
                             Print([LOWER_BORDER, LOWER_BORDER, LOWER_BORDER].concat())
                         )?;
                     } else {
                         queue!(
                             stdout,
-                            MoveTo(terminal_x + start_x, terminal_y + CELL_HEIGHT + start_y),
+                            MoveTo(
+                                terminal_x + layout.board_start_x,
+                                terminal_y + layout.cell_height + layout.board_start_y
+                            ),
                             Print([LOWER_BORDER, LOWER_BORDER].concat())
                         )?;
                     }
                 }
                 queue!(
                     stdout,
-                    MoveTo(terminal_x + start_x, terminal_y + start_y),
+                    MoveTo(
+                        terminal_x + layout.board_start_x,
+                        terminal_y + layout.board_start_y
+                    ),
                     SetForegroundColor(color),
                     Print(tile),
                     ResetColor
                 )?;
             }
         }
+        Ok(())
+    }
+}
+
+struct TetrominoBuffer {
+    held: Option<ActiveTetromino>,
+}
+
+impl TetrominoBuffer {
+    fn init() -> Self {
+        Self { held: None }
+    }
+
+    fn swap(&mut self, tetromino: ActiveTetromino) -> Option<ActiveTetromino> {
+        let piece = self.held;
+        self.held = Some(tetromino);
+        piece
+    }
+
+    fn draw(&self, stdout: &mut Stdout, layout: &RenderLayout) -> std::io::Result<()> {
+        //TODO: Draw border around buffer piece
+
+        if let Some(held) = self.held {
+            for (block_x, block_y) in held.blocks() {
+                let x = layout.hold_start_x + block_x as u16 * layout.cell_width;
+                let y = layout.hold_start_y + block_y as u16 * layout.cell_height + layout.cell_height * 2;
+
+                queue!(
+                    stdout,
+                    MoveTo(x, y),
+                    SetForegroundColor(held.kind.color()),
+                    Print(TET_BLOCK),
+                    ResetColor
+                )?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -368,6 +451,12 @@ impl ActiveTetromino {
         }
     }
 
+    fn reset(&mut self) {
+        self.x = 3;
+        self.y = 0;
+        self.rotation = 0;
+    }
+
     fn slot(&mut self, bag: &mut TetrominoBag) {
         *self = ActiveTetromino::from(bag.spawn());
     }
@@ -455,78 +544,144 @@ impl TetrominoBag {
     }
 }
 
+struct Timings {
+    drop_interval: Duration,
+    lock_delay: Duration,
+}
+
+impl Timings {
+    fn init() -> Self {
+        Self {
+            drop_interval: Duration::from_millis(1500),
+            lock_delay: Duration::from_millis(500),
+        }
+    }
+}
+
+struct Game {
+    grid: Grid,
+    bag: TetrominoBag,
+    active: ActiveTetromino,
+    buffer: TetrominoBuffer,
+    has_swapped: bool,
+    grounded_since: Option<Instant>,
+    last_drop: Instant,
+}
+
+impl Game {
+    fn new() -> Self {
+        let mut bag = TetrominoBag::new();
+        let active = ActiveTetromino::from(bag.spawn());
+        Self {
+            grid: Grid::new(10, 20),
+            bag: bag,
+            active: active,
+            buffer: TetrominoBuffer::init(),
+            has_swapped: false,
+            grounded_since: None,
+            last_drop: Instant::now(),
+        }
+    }
+}
+
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
 
     let mut stdout = stdout();
-    let drop_interval = Duration::from_millis(1500);
-    let mut last_drop = Instant::now();
-
-    let lock_delay = Duration::from_millis(500);
-    let mut grounded_since: Option<Instant> = None;
-
-    let mut grid = Grid::new(10, 20);
-    let mut bag = TetrominoBag::new();
-
-    let tetromino = bag.spawn();
-    let mut active = ActiveTetromino::from(tetromino);
+    let mut game = Game::new();
+    let timings = Timings::init();
+    let mut last_terminal_size = terminal::size()?;
 
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
 
     loop {
-        let grounded = !grid.is_valid_position(&active, active.x, active.y + 1, active.rotation);
+        let grounded = !game.grid.is_valid_position(
+            &game.active,
+            game.active.x,
+            game.active.y + 1,
+            game.active.rotation,
+        );
 
         if grounded {
-            if grounded_since.is_none() {
-                grounded_since = Some(Instant::now());
+            if game.grounded_since.is_none() {
+                game.grounded_since = Some(Instant::now());
             }
 
-            if grounded_since.unwrap().elapsed() >= lock_delay {
-                grid.lock_piece(&active);
-                active.slot(&mut bag);
-                grounded_since = None;
+            if game.grounded_since.unwrap().elapsed() >= timings.lock_delay {
+                game.grid.lock_piece(&game.active);
+                game.active.slot(&mut game.bag);
+                game.grounded_since = None;
+                game.has_swapped = false;
             }
         }
-        if last_drop.elapsed() > drop_interval {
-            if !active.move_down(&grid) {
-                grid.lock_piece(&active);
-                active.slot(&mut bag);
+        if game.last_drop.elapsed() > timings.drop_interval {
+            if !game.active.move_down(&game.grid) {
+                game.grid.lock_piece(&game.active);
+                game.active.slot(&mut game.bag);
+                game.has_swapped = false;
             }
-            grounded_since = None;
-            last_drop = Instant::now();
+            game.grounded_since = None;
+            game.last_drop = Instant::now();
         }
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    KeyCode::Left => active.move_left(&grid),
-                    KeyCode::Right => active.move_right(&grid),
+                    KeyCode::Left => game.active.move_left(&game.grid),
+                    KeyCode::Right => game.active.move_right(&game.grid),
                     KeyCode::Down => {
-                        if active.move_down(&grid) {
-                            grounded_since = None;
+                        if game.active.move_down(&game.grid) {
+                            game.grounded_since = None;
                         }
-                        last_drop = Instant::now();
+                        game.last_drop = Instant::now();
                     }
                     KeyCode::Char(' ') => {
-                        active.fall(&grid);
-                        grid.lock_piece(&active);
-                        active.slot(&mut bag);
-                        last_drop = Instant::now();
+                        game.active.fall(&game.grid);
+                        game.grid.lock_piece(&game.active);
+                        game.active.slot(&mut game.bag);
+                        game.last_drop = Instant::now();
+                        game.has_swapped = false;
                     }
-                    KeyCode::Char('a') => active.rotate(&grid, RotationDirection::Left),
-                    KeyCode::Char('d') => active.rotate(&grid, RotationDirection::Right),
+                    KeyCode::Char('a') => game.active.rotate(&game.grid, RotationDirection::Left),
+                    KeyCode::Char('d') => game.active.rotate(&game.grid, RotationDirection::Right),
+                    KeyCode::Char('c') => {
+                        if !game.has_swapped {
+                            game.has_swapped = true;
+                            game.active.reset();
+                            let new_piece = game.buffer.swap(game.active);
+                            game.active = if let Some(swapped) = new_piece {
+                                swapped
+                            } else {
+                                ActiveTetromino::from(game.bag.spawn())
+                            }
+                        }
+                    }
                     KeyCode::Char('q') => break,
                     _ => {}
                 }
             }
         }
 
-        grid.destruct_lines();
-        if !grid.is_valid_position(&active, active.x, active.y, active.rotation) {
+        game.grid.destruct_lines();
+        if !game.grid.is_valid_position(
+            &game.active,
+            game.active.x,
+            game.active.y,
+            game.active.rotation,
+        ) {
             break;
         }
 
-        grid.draw(&mut stdout, Some(&active))?;
+        let (term_width, term_height) = terminal::size()?;
+        if (term_width, term_height) != last_terminal_size {
+            queue!(stdout, Clear(ClearType::All))?;
+            last_terminal_size = (term_width, term_height);
+        }
+
+        let layout = RenderLayout::new(term_width, term_height, game.grid.width, game.grid.height);
+
+        game.grid.draw(&mut stdout, Some(&game.active), &layout)?;
+        game.buffer.draw(&mut stdout, &layout)?;
         stdout.flush()?;
     }
 
