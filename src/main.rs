@@ -97,6 +97,43 @@ impl Grid {
         }
     }
 
+    fn clear_line(&mut self, row: u16) {
+        for x in 0..self.width {
+            self.cells[row as usize][x as usize] = None;
+        }
+
+    }
+
+    fn shift_row_down(&mut self, row: u16) {
+        for above_row in (0..row).rev() {
+            for x in 0..self.width {
+                let above = self.cells[above_row as usize][x as usize];
+                self.cells[(above_row + 1) as usize][x as usize] = above;
+            } 
+        } 
+    }
+
+    fn destruct_lines(&mut self) {
+        let mut full_rows: Vec<u16> = vec![];
+        for y in 0..self.height {
+            let mut filled = true;
+            for x in 0..self.width {
+                if self.cells[y as usize][x as usize].is_none() {
+                    filled = false;
+                }
+            }
+
+            if filled {
+                full_rows.push(y);
+            }
+        }
+        
+        for y in full_rows {
+            self.clear_line(y); 
+            self.shift_row_down(y);
+        }
+    }
+
     fn hits_wall(&self, active: &ActiveTetromino, next_x: i32, next_rotation: usize) -> bool {
         for (block_x, _) in active.kind.blocks(next_rotation) {
             let x = next_x + block_x;
@@ -304,9 +341,7 @@ struct Tetromino {
 
 impl Tetromino {
     fn new(kind: TetrominoKind) -> Self {
-        Self {
-            kind: kind,
-        }
+        Self { kind: kind }
     }
 }
 
@@ -430,7 +465,6 @@ fn main() -> std::io::Result<()> {
     let lock_delay = Duration::from_millis(500);
     let mut grounded_since: Option<Instant> = None;
 
-
     let mut grid = Grid::new(10, 20);
     let mut bag = TetrominoBag::new();
 
@@ -445,7 +479,7 @@ fn main() -> std::io::Result<()> {
         if grounded {
             if grounded_since.is_none() {
                 grounded_since = Some(Instant::now());
-            } 
+            }
 
             if grounded_since.unwrap().elapsed() >= lock_delay {
                 grid.lock_piece(&active);
@@ -458,6 +492,7 @@ fn main() -> std::io::Result<()> {
                 grid.lock_piece(&active);
                 active.slot(&mut bag);
             }
+            grounded_since = None;
             last_drop = Instant::now();
         }
 
@@ -467,20 +502,28 @@ fn main() -> std::io::Result<()> {
                     KeyCode::Left => active.move_left(&grid),
                     KeyCode::Right => active.move_right(&grid),
                     KeyCode::Down => {
-                        active.move_down(&grid);
+                        if active.move_down(&grid) {
+                            grounded_since = None;
+                        }
                         last_drop = Instant::now();
                     }
                     KeyCode::Char(' ') => {
                         active.fall(&grid);
                         grid.lock_piece(&active);
                         active.slot(&mut bag);
-                    },
+                        last_drop = Instant::now();
+                    }
                     KeyCode::Char('a') => active.rotate(&grid, RotationDirection::Left),
                     KeyCode::Char('d') => active.rotate(&grid, RotationDirection::Right),
                     KeyCode::Char('q') => break,
                     _ => {}
                 }
             }
+        }
+
+        grid.destruct_lines();
+        if !grid.is_valid_position(&active, active.x, active.y, active.rotation) {
+            break;
         }
 
         grid.draw(&mut stdout, Some(&active))?;
