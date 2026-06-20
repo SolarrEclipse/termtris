@@ -1,5 +1,5 @@
 use std::{
-    intrinsics::autodiff, io::{Stdout, Write, stdout}, time::{Duration, Instant}, vec
+    io::{Stdout, Write, stdout}, time::{Duration, Instant}, vec
 };
 
 use crossterm::{
