@@ -1,5 +1,7 @@
 use std::{
-    io::{Stdout, Write, stdout}, time::{Duration, Instant}, vec
+    io::{Stdout, Write, stdout},
+    time::{Duration, Instant},
+    vec,
 };
 
 use crossterm::{
@@ -38,8 +40,8 @@ impl RenderLayout {
         let board_start_x = term_width / 2 - board_width / 2;
         let board_start_y = term_height / 2 - board_height / 2;
 
-        let hold_start_x = board_start_x.saturating_sub(8);
-        let hold_start_y = board_start_y;
+        let hold_start_x = board_start_x.saturating_sub(14);
+        let hold_start_y = board_start_y + 1;
 
         Self {
             cell_width: CELL_WIDTH,
@@ -307,12 +309,43 @@ impl TetrominoBuffer {
     }
 
     fn draw(&self, stdout: &mut Stdout, layout: &RenderLayout) -> std::io::Result<()> {
-        //TODO: Draw border around buffer piece
+        let border_width = 12;
+        let border_height = 6;
+        let title = " HOLD ";
+        let title_x = layout.hold_start_x + (border_width - title.len() as u16) / 2;
+
+        for y in 0..border_height {
+            for x in 0..border_width {
+                let border_y = y + layout.hold_start_y;
+                let border_x = x + layout.hold_start_x;
+                let is_top = y == 0;
+                let is_left = x == 0;
+                let is_bottom = y == border_height - 1;
+                let is_right = x == border_width - 1;
+
+                let char = if is_top {
+                    UPPER_BORDER
+                } else if is_bottom {
+                    LOWER_BORDER
+                } else if is_right {
+                    VERT_BORDER
+                } else if is_left {
+                    VERT_BORDER
+                } else {
+                    " "
+                };
+
+                queue!(stdout, MoveTo(border_x, border_y), Print(char))?;
+            }
+        }
+
+        queue!(stdout, MoveTo(title_x, layout.hold_start_y), Print(title))?;
 
         if let Some(held) = self.held {
             for (block_x, block_y) in held.blocks() {
-                let x = layout.hold_start_x + block_x as u16 * layout.cell_width;
-                let y = layout.hold_start_y + block_y as u16 * layout.cell_height + layout.cell_height * 2;
+                let x = layout.hold_start_x + block_x as u16 * layout.cell_width + border_width / 4;
+                let y =
+                    layout.hold_start_y + block_y as u16 * layout.cell_height + border_height / 3;
 
                 queue!(
                     stdout,
