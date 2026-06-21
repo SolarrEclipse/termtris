@@ -30,6 +30,8 @@ struct RenderLayout {
     board_start_y: u16,
     hold_start_x: u16,
     hold_start_y: u16,
+    queue_start_x: u16,
+    queue_start_y: u16,
 }
 
 impl RenderLayout {
@@ -40,8 +42,11 @@ impl RenderLayout {
         let board_start_x = term_width / 2 - board_width / 2;
         let board_start_y = term_height / 2 - board_height / 2;
 
-        let hold_start_x = board_start_x.saturating_sub(14);
-        let hold_start_y = board_start_y + 1;
+        let hold_start_x = board_start_x.saturating_sub(16);
+        let hold_start_y = board_start_y + 2;
+
+        let queue_start_x = board_start_x + board_width + CELL_WIDTH;
+        let queue_start_y = board_start_y + 2;
 
         Self {
             cell_width: CELL_WIDTH,
@@ -50,6 +55,8 @@ impl RenderLayout {
             board_start_y,
             hold_start_x,
             hold_start_y,
+            queue_start_x,
+            queue_start_y,
         }
     }
 }
@@ -309,51 +316,56 @@ impl TetrominoBuffer {
     }
 
     fn draw(&self, stdout: &mut Stdout, layout: &RenderLayout) -> std::io::Result<()> {
-        let border_width = 12;
+        let border_width = 14;
         let border_height = 6;
         let title = " HOLD ";
         let title_x = layout.hold_start_x + (border_width - title.len() as u16) / 2;
+        let title_local = (title_x - layout.hold_start_x) as usize;
 
-        for y in 0..border_height {
+        let mut top_row = String::new();
+        for x in 0..border_width as usize {
+            if x >= title_local && x < title_local + title.len() {
+                top_row.push(title.as_bytes()[x - title_local] as char);
+            } else {
+                top_row.push_str(UPPER_BORDER);
+            }
+        }
+        queue!(
+            stdout,
+            MoveTo(layout.hold_start_x, layout.hold_start_y),
+            Print(top_row)
+        )?;
+
+        for y in 1..border_height {
+            let mut skip_x: Option<u16> = None;
             for x in 0..border_width {
                 let border_y = y + layout.hold_start_y;
                 let border_x = x + layout.hold_start_x;
-                let is_top = y == 0;
-                let is_left = x == 0;
-                let is_bottom = y == border_height - 1;
-                let is_right = x == border_width - 1;
 
-                let char = if is_top {
-                    UPPER_BORDER
-                } else if is_bottom {
-                    LOWER_BORDER
-                } else if is_right {
-                    VERT_BORDER
-                } else if is_left {
-                    VERT_BORDER
+                if y == border_height - 1 {
+                    queue!(stdout, MoveTo(border_x, border_y), Print(LOWER_BORDER))?;
+                } else if x == 0 || x == border_width - 1 {
+                    queue!(stdout, MoveTo(border_x, border_y), Print(VERT_BORDER))?;
+                } else if skip_x == Some(x) {
+                    skip_x = None;
                 } else {
-                    " "
-                };
-
-                queue!(stdout, MoveTo(border_x, border_y), Print(char))?;
-            }
-        }
-
-        queue!(stdout, MoveTo(title_x, layout.hold_start_y), Print(title))?;
-
-        if let Some(held) = self.held {
-            for (block_x, block_y) in held.blocks() {
-                let x = layout.hold_start_x + block_x as u16 * layout.cell_width + border_width / 4;
-                let y =
-                    layout.hold_start_y + block_y as u16 * layout.cell_height + border_height / 3;
-
-                queue!(
-                    stdout,
-                    MoveTo(x, y),
-                    SetForegroundColor(held.kind.color()),
-                    Print(TET_BLOCK),
-                    ResetColor
-                )?;
+                    let mut drew_block = false;
+                    if let Some(held) = self.held {
+                        for (bx, by) in held.blocks() {
+                            let block_x = bx as u16 * layout.cell_width + border_width / 4;
+                            let block_y = by as u16 * layout.cell_height + border_height / 3;
+                            if block_x == x && block_y == y {
+                                queue!(stdout, MoveTo(border_x, border_y), SetForegroundColor(held.kind.color()), Print(TET_BLOCK), ResetColor)?;
+                                skip_x = Some(x + 1);
+                                drew_block = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !drew_block {
+                        queue!(stdout, MoveTo(border_x, border_y), Print(" "))?;
+                    }
+                }
             }
         }
 
@@ -490,8 +502,8 @@ impl ActiveTetromino {
         self.rotation = 0;
     }
 
-    fn slot(&mut self, bag: &mut TetrominoBag) {
-        *self = ActiveTetromino::from(bag.spawn());
+    fn slot(&mut self, queue: &mut TetrominoQueue, bag: &mut TetrominoBag) {
+        *self = ActiveTetromino::from(queue.swap(bag));
     }
 
     fn fall(&mut self, grid: &Grid) {
@@ -591,9 +603,89 @@ impl Timings {
     }
 }
 
+struct TetrominoQueue {
+    tetrominos: Vec<Tetromino>,
+    size: u16,
+}
+
+impl TetrominoQueue {
+    fn new(bag: &mut TetrominoBag, size: u16) -> Self {
+        let mut tetrominos = vec![];
+        for _ in 0..size {
+            tetrominos.push(bag.spawn());
+        }
+        Self { tetrominos, size }
+    }
+
+    fn swap(&mut self, bag: &mut TetrominoBag) -> Tetromino {
+        let next = self.tetrominos.remove(0);
+        self.tetrominos.push(bag.spawn());
+        next
+    }
+
+    fn draw(&self, stdout: &mut Stdout, layout: &RenderLayout) -> std::io::Result<()> {
+        let border_width = 14u16;
+        let border_height = 20u16;
+
+        let title = " NEXT ";
+        let title_x = layout.queue_start_x + (border_width - title.len() as u16) / 2;
+        let title_local = (title_x - layout.queue_start_x) as usize;
+
+        for y in 0..border_height {
+            if y == 0 {
+                let mut top_row = String::new();
+                for x in 0..border_width as usize {
+                    if x >= title_local && x < title_local + title.len() {
+                        top_row.push(title.as_bytes()[x - title_local] as char);
+                    } else {
+                        top_row.push_str(UPPER_BORDER);
+                    }
+                }
+                queue!(stdout, MoveTo(layout.queue_start_x, layout.queue_start_y), Print(top_row))?;
+                continue;
+            }
+
+            let mut skip_x: Option<u16> = None;
+            for x in 0..border_width {
+                let border_y = y + layout.queue_start_y;
+                let border_x = x + layout.queue_start_x;
+
+                if y == border_height - 1 {
+                    queue!(stdout, MoveTo(border_x, border_y), Print(LOWER_BORDER))?;
+                } else if x == 0 || x == border_width - 1 {
+                    queue!(stdout, MoveTo(border_x, border_y), Print(VERT_BORDER))?;
+                } else if skip_x == Some(x) {
+                    skip_x = None;
+                } else {
+                    let mut drew_block = false;
+                    for (i, block) in self.tetrominos.iter().enumerate() {
+                        let y_offset = i as u16 * 4;
+                        for (block_x, block_y) in block.kind.blocks(0) {
+                            let bx = block_x as u16 * layout.cell_width + border_width / 4;
+                            let by = block_y as u16 * layout.cell_height + y_offset + self.size / 2 + CELL_HEIGHT;
+                            if bx == x && by == y {
+                                queue!(stdout, MoveTo(border_x, border_y), SetForegroundColor(block.kind.color()), Print(TET_BLOCK), ResetColor)?;
+                                skip_x = Some(x + 1);
+                                drew_block = true;
+                                break;
+                            }
+                        }
+                        if drew_block { break; }
+                    }
+                    if !drew_block {
+                        queue!(stdout, MoveTo(border_x, border_y), Print(" "))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 struct Game {
     grid: Grid,
     bag: TetrominoBag,
+    queue: TetrominoQueue,
     active: ActiveTetromino,
     buffer: TetrominoBuffer,
     has_swapped: bool,
@@ -604,16 +696,31 @@ struct Game {
 impl Game {
     fn new() -> Self {
         let mut bag = TetrominoBag::new();
-        let active = ActiveTetromino::from(bag.spawn());
+        let mut queue = TetrominoQueue::new(&mut bag, 4);
+        let active = ActiveTetromino::from(queue.swap(&mut bag));
         Self {
             grid: Grid::new(10, 20),
-            bag: bag,
-            active: active,
+            bag,
+            queue,
+            active,
             buffer: TetrominoBuffer::init(),
             has_swapped: false,
             grounded_since: None,
             last_drop: Instant::now(),
         }
+    }
+
+    fn lock_and_advance(&mut self) {
+        self.grid.lock_piece(&self.active);
+        self.active.slot(&mut self.queue, &mut self.bag);
+        self.grounded_since = None;
+        self.has_swapped = false;
+    }
+
+    fn hard_drop(&mut self) {
+        self.active.fall(&self.grid);
+        self.lock_and_advance();
+        self.last_drop = Instant::now();
     }
 }
 
@@ -641,17 +748,12 @@ fn main() -> std::io::Result<()> {
             }
 
             if game.grounded_since.unwrap().elapsed() >= timings.lock_delay {
-                game.grid.lock_piece(&game.active);
-                game.active.slot(&mut game.bag);
-                game.grounded_since = None;
-                game.has_swapped = false;
+                game.lock_and_advance();
             }
         }
         if game.last_drop.elapsed() > timings.drop_interval {
             if !game.active.move_down(&game.grid) {
-                game.grid.lock_piece(&game.active);
-                game.active.slot(&mut game.bag);
-                game.has_swapped = false;
+                game.lock_and_advance();
             }
             game.grounded_since = None;
             game.last_drop = Instant::now();
@@ -669,11 +771,7 @@ fn main() -> std::io::Result<()> {
                         game.last_drop = Instant::now();
                     }
                     KeyCode::Char(' ') => {
-                        game.active.fall(&game.grid);
-                        game.grid.lock_piece(&game.active);
-                        game.active.slot(&mut game.bag);
-                        game.last_drop = Instant::now();
-                        game.has_swapped = false;
+                        game.hard_drop();
                     }
                     KeyCode::Char('a') => game.active.rotate(&game.grid, RotationDirection::Left),
                     KeyCode::Char('d') => game.active.rotate(&game.grid, RotationDirection::Right),
@@ -685,7 +783,7 @@ fn main() -> std::io::Result<()> {
                             game.active = if let Some(swapped) = new_piece {
                                 swapped
                             } else {
-                                ActiveTetromino::from(game.bag.spawn())
+                                ActiveTetromino::from(game.queue.swap(&mut game.bag))
                             }
                         }
                     }
@@ -715,6 +813,7 @@ fn main() -> std::io::Result<()> {
 
         game.grid.draw(&mut stdout, Some(&game.active), &layout)?;
         game.buffer.draw(&mut stdout, &layout)?;
+        game.queue.draw(&mut stdout, &layout)?;
         stdout.flush()?;
     }
 
