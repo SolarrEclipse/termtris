@@ -1,0 +1,12 @@
+[keys]
+move_left = "Left"
+move_right = "Right"
+move_down = "Down"
+rotate_left = "a"
+rotate_right = "d"
+hard_drop = "Space"
+hold = "Tab"
+pause = "Escape"
+
+[display]
+color_mode = "Prot."
