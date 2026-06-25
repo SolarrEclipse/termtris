@@ -1,13 +1,13 @@
-use std::io::Stdout;
+use crate::render::{
+    CELL_HEIGHT, LOWER_BORDER, RenderLayout, UPPER_BORDER,
+    VERT_BORDER,
+};
 use crossterm::{
     cursor::MoveTo,
     queue,
     style::{Color, Print, ResetColor, SetForegroundColor},
 };
-use crate::render::{
-    ColorMode, RenderLayout, CELL_HEIGHT, CELL_WIDTH, LOWER_BORDER, TET_BLOCK, UPPER_BORDER,
-    VERT_BORDER,
-};
+use std::io::Write;
 
 #[derive(Clone, Copy)]
 pub enum TetrominoKind {
@@ -21,35 +21,15 @@ pub enum TetrominoKind {
 }
 
 impl TetrominoKind {
-    pub fn color(&self, mode: ColorMode) -> Color {
-        match mode {
-            ColorMode::Normal => match self {
-                TetrominoKind::I => Color::Rgb { r: 91, g: 206, b: 250 },
-                TetrominoKind::O => Color::Rgb { r: 250, g: 222, b: 91 },
-                TetrominoKind::T => Color::Rgb { r: 190, g: 126, b: 240 },
-                TetrominoKind::S => Color::Rgb { r: 94, g: 214, b: 137 },
-                TetrominoKind::Z => Color::Rgb { r: 240, g: 96, b: 113 },
-                TetrominoKind::J => Color::Rgb { r: 92, g: 124, b: 250 },
-                TetrominoKind::L => Color::Rgb { r: 245, g: 163, b: 89 },
-            },
-            ColorMode::Deuteranopia | ColorMode::Protanopia => match self {
-                TetrominoKind::I => Color::Rgb { r: 80, g: 200, b: 255 },
-                TetrominoKind::O => Color::Rgb { r: 255, g: 220, b: 80 },
-                TetrominoKind::T => Color::Rgb { r: 200, g: 130, b: 240 },
-                TetrominoKind::S => Color::Rgb { r: 80, g: 130, b: 255 },
-                TetrominoKind::Z => Color::Rgb { r: 255, g: 165, b: 40 },
-                TetrominoKind::J => Color::Rgb { r: 50, g: 80, b: 200 },
-                TetrominoKind::L => Color::Rgb { r: 255, g: 200, b: 50 },
-            },
-            ColorMode::Tritanopia => match self {
-                TetrominoKind::I => Color::Rgb { r: 100, g: 220, b: 220 },
-                TetrominoKind::O => Color::Rgb { r: 240, g: 130, b: 210 },
-                TetrominoKind::T => Color::Rgb { r: 200, g: 130, b: 240 },
-                TetrominoKind::S => Color::Rgb { r: 100, g: 210, b: 130 },
-                TetrominoKind::Z => Color::Rgb { r: 240, g: 100, b: 110 },
-                TetrominoKind::J => Color::Rgb { r: 220, g: 160, b: 80 },
-                TetrominoKind::L => Color::Rgb { r: 240, g: 100, b: 60 },
-            },
+    pub fn color(&self) -> Color {
+        match self {
+            TetrominoKind::I => Color::Rgb { r: 91,  g: 206, b: 250 },
+            TetrominoKind::O => Color::Rgb { r: 250, g: 222, b: 91  },
+            TetrominoKind::T => Color::Rgb { r: 190, g: 126, b: 240 },
+            TetrominoKind::S => Color::Rgb { r: 94,  g: 214, b: 137 },
+            TetrominoKind::Z => Color::Rgb { r: 240, g: 96,  b: 113 },
+            TetrominoKind::J => Color::Rgb { r: 92,  g: 124, b: 250 },
+            TetrominoKind::L => Color::Rgb { r: 245, g: 163, b: 89  },
         }
     }
 
@@ -62,10 +42,10 @@ impl TetrominoKind {
 
             (TetrominoKind::O, _) => [(1, 0), (2, 0), (1, 1), (2, 1)],
 
-            (TetrominoKind::T, 0) => [(0, 0), (1, 0), (2, 0), (1, 1)],
-            (TetrominoKind::T, 1) => [(1, 0), (0, 1), (1, 1), (1, 2)],
-            (TetrominoKind::T, 2) => [(1, 0), (0, 1), (1, 1), (2, 1)],
-            (TetrominoKind::T, 3) => [(0, 0), (0, 1), (1, 1), (0, 2)],
+            (TetrominoKind::T, 0) => [(1, 0), (0, 1), (1, 1), (2, 1)],
+            (TetrominoKind::T, 1) => [(0, 0), (0, 1), (1, 1), (0, 2)],
+            (TetrominoKind::T, 2) => [(0, 0), (1, 0), (2, 0), (1, 1)],
+            (TetrominoKind::T, 3) => [(1, 0), (0, 1), (1, 1), (1, 2)],
 
             (TetrominoKind::S, 0) => [(1, 0), (2, 0), (0, 1), (1, 1)],
             (TetrominoKind::S, 1) => [(0, 0), (0, 1), (1, 1), (1, 2)],
@@ -112,10 +92,11 @@ pub struct ActiveTetromino {
 pub enum RotationDirection {
     Left,
     Right,
+    Flip,
 }
 
-impl ActiveTetromino {
-    pub fn from(tet: Tetromino) -> Self {
+impl From<Tetromino> for ActiveTetromino {
+    fn from(tet: Tetromino) -> Self {
         Self {
             kind: tet.kind,
             x: 3,
@@ -123,7 +104,9 @@ impl ActiveTetromino {
             rotation: 0,
         }
     }
+}
 
+impl ActiveTetromino {
     pub fn reset(&mut self) {
         self.x = 3;
         self.y = 0;
@@ -143,10 +126,11 @@ impl ActiveTetromino {
     }
 
     pub fn rotate(&mut self, grid: &Grid, dir: RotationDirection) {
-        let kicks = [1, -1, 2, -1];
+        let kicks = [1, -1, 2, -2];
         let next_rotation = match dir {
             RotationDirection::Left => (self.rotation + 3) % 4,
             RotationDirection::Right => (self.rotation + 1) % 4,
+            RotationDirection::Flip => (self.rotation + 2) % 4,
         };
 
         if grid.is_valid_position(self, self.x, self.y, next_rotation) {
@@ -236,76 +220,56 @@ impl TetrominoQueue {
         next
     }
 
-    pub fn draw(&self, stdout: &mut Stdout, layout: &RenderLayout, color_mode: ColorMode) -> std::io::Result<()> {
+    pub fn draw(
+        &self,
+        stdout: &mut impl Write,
+        layout: &RenderLayout,
+        block: &str,
+    ) -> std::io::Result<()> {
         let border_width = 14u16;
         let border_height = 20u16;
+        let interior_width = (border_width - 2) as usize;
 
         let title = " NEXT ";
         let title_x = layout.queue_start_x + (border_width - title.len() as u16) / 2;
         let title_local = (title_x - layout.queue_start_x) as usize;
 
-        for y in 0..border_height {
-            if y == 0 {
-                let mut top_row = String::new();
-                for x in 0..border_width as usize {
-                    if x >= title_local && x < title_local + title.len() {
-                        top_row.push(title.as_bytes()[x - title_local] as char);
-                    } else {
-                        top_row.push_str(UPPER_BORDER);
-                    }
-                }
-                queue!(
-                    stdout,
-                    MoveTo(layout.queue_start_x, layout.queue_start_y),
-                    Print(top_row)
-                )?;
-                continue;
-            }
-
-            let mut skip_x: Option<u16> = None;
-            for x in 0..border_width {
-                let border_y = y + layout.queue_start_y;
-                let border_x = x + layout.queue_start_x;
-
-                if y == border_height - 1 {
-                    queue!(stdout, MoveTo(border_x, border_y), Print(LOWER_BORDER))?;
-                } else if x == 0 || x == border_width - 1 {
-                    queue!(stdout, MoveTo(border_x, border_y), Print(VERT_BORDER))?;
-                } else if skip_x == Some(x) {
-                    skip_x = None;
-                } else {
-                    let mut drew_block = false;
-                    for (i, block) in self.tetrominos.iter().enumerate() {
-                        let y_offset = i as u16 * 4;
-                        for (block_x, block_y) in block.kind.blocks(0) {
-                            let bx = block_x as u16 * layout.cell_width + border_width / 4;
-                            let by = block_y as u16 * layout.cell_height
-                                + y_offset
-                                + self.size / 2
-                                + CELL_HEIGHT;
-                            if bx == x && by == y {
-                                queue!(
-                                    stdout,
-                                    MoveTo(border_x, border_y),
-                                    SetForegroundColor(block.kind.color(color_mode)),
-                                    Print(TET_BLOCK),
-                                    ResetColor
-                                )?;
-                                skip_x = Some(x + 1);
-                                drew_block = true;
-                                break;
-                            }
-                        }
-                        if drew_block {
-                            break;
-                        }
-                    }
-                    if !drew_block {
-                        queue!(stdout, MoveTo(border_x, border_y), Print(" "))?;
-                    }
-                }
+        let mut top_row = String::new();
+        for x in 0..border_width as usize {
+            if x >= title_local && x < title_local + title.len() {
+                top_row.push(title.as_bytes()[x - title_local] as char);
+            } else {
+                top_row.push_str(UPPER_BORDER);
             }
         }
+        queue!(stdout, MoveTo(layout.queue_start_x, layout.queue_start_y), Print(top_row))?;
+
+        for y in 1..border_height {
+            let screen_y = y + layout.queue_start_y;
+            if y == border_height - 1 {
+                queue!(stdout, MoveTo(layout.queue_start_x, screen_y), Print(LOWER_BORDER.repeat(border_width as usize)))?;
+            } else {
+                queue!(stdout, MoveTo(layout.queue_start_x, screen_y), Print(VERT_BORDER))?;
+                queue!(stdout, MoveTo(layout.queue_start_x + 1, screen_y), Print(format!("{:width$}", "", width = interior_width)))?;
+                queue!(stdout, MoveTo(layout.queue_start_x + border_width - 1, screen_y), Print(VERT_BORDER))?;
+            }
+        }
+
+        for (i, piece) in self.tetrominos.iter().enumerate() {
+            let y_offset = i as u16 * 4;
+            for (block_x, block_y) in piece.kind.blocks(0) {
+                let screen_x = layout.queue_start_x + block_x as u16 * layout.cell_width + border_width / 4;
+                let screen_y = layout.queue_start_y + block_y as u16 * CELL_HEIGHT + y_offset + self.size / 2 + CELL_HEIGHT;
+                queue!(
+                    stdout,
+                    MoveTo(screen_x, screen_y),
+                    SetForegroundColor(piece.kind.color()),
+                    Print(block),
+                    ResetColor
+                )?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -325,7 +289,12 @@ impl TetrominoBuffer {
         piece
     }
 
-    pub fn draw(&self, stdout: &mut Stdout, layout: &RenderLayout, color_mode: ColorMode) -> std::io::Result<()> {
+    pub fn draw(
+        &self,
+        stdout: &mut impl Write,
+        layout: &RenderLayout,
+        block: &str,
+    ) -> std::io::Result<()> {
         let border_width = 14;
         let border_height = 6;
         let title = " HOLD ";
@@ -368,8 +337,8 @@ impl TetrominoBuffer {
                                 queue!(
                                     stdout,
                                     MoveTo(border_x, border_y),
-                                    SetForegroundColor(held.kind.color(color_mode)),
-                                    Print(TET_BLOCK),
+                                    SetForegroundColor(held.kind.color()),
+                                    Print(block),
                                     ResetColor
                                 )?;
                                 skip_x = Some(x + 1);
@@ -398,7 +367,11 @@ pub struct Grid {
 impl Grid {
     pub fn new(width: u16, height: u16) -> Self {
         let cells = vec![vec![None; width.into()]; height.into()];
-        Self { width, height, cells }
+        Self {
+            width,
+            height,
+            cells,
+        }
     }
 
     pub fn active_tet_at(
@@ -467,7 +440,7 @@ impl Grid {
         }
     }
 
-    pub fn destroy_lines(&mut self) -> u16 {
+    pub fn find_full_rows(&self) -> Vec<u16> {
         let mut full_rows: Vec<u16> = vec![];
         for y in 0..self.height {
             let mut filled = true;
@@ -480,11 +453,15 @@ impl Grid {
                 full_rows.push(y);
             }
         }
-        for y in &full_rows {
+        full_rows
+    }
+
+    pub fn remove_rows(&mut self, rows: &[u16]) -> u16 {
+        for y in rows {
             self.clear_line(y);
             self.shift_row_down(y);
         }
-        full_rows.len() as u16
+        rows.len() as u16
     }
 
     pub fn hits_wall(&self, active: &ActiveTetromino, next_x: i32, next_rotation: usize) -> bool {
@@ -511,10 +488,11 @@ impl Grid {
 
     pub fn draw(
         &self,
-        stdout: &mut Stdout,
+        stdout: &mut impl Write,
         active: Option<&ActiveTetromino>,
         layout: &RenderLayout,
-        color_mode: ColorMode,
+        block: &str,
+        clear_animation: Option<(&[u16], i32, f32)>,
     ) -> std::io::Result<()> {
         let border_left = 0u16;
         let cells_left = border_left + 1;
@@ -531,12 +509,26 @@ impl Grid {
                 let locked_cell = self.cells[y as usize][x as usize];
                 let ghost_cell = self.active_tet_at(ghost.as_ref(), x, y);
 
-                let (color, tile) = if let Some(kind) = active_cell {
-                    (kind.color(color_mode), TET_BLOCK)
+                let in_sweep = if let Some((rows, center_column, progress)) = clear_animation {
+                    if rows.contains(&y) {
+                        let distance = (x as i32 - center_column).abs();
+                        let reach = (progress * self.width as f32) as i32;
+                        distance <= reach
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                let (color, tile) = if in_sweep {
+                    (Color::Reset, "  ")
+                } else if let Some(kind) = active_cell {
+                    (kind.color(), block)
                 } else if let Some(kind) = locked_cell {
-                    (kind.color(color_mode), TET_BLOCK)
-                } else if let Some(_kind) = ghost_cell {
-                    (Color::DarkGrey, TET_BLOCK)
+                    (kind.color(), block)
+                } else if ghost_cell.is_some() {
+                    (Color::DarkGrey, block)
                 } else {
                     (Color::Rgb { r: 0, g: 0, b: 0 }, "  ")
                 };

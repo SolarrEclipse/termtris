@@ -4,9 +4,14 @@ move_right = "Right"
 move_down = "Down"
 rotate_left = "a"
 rotate_right = "d"
+rotate_180 = "w"
 hard_drop = "Space"
-hold = "Tab"
+hold = "c"
 pause = "Escape"
 
 [display]
-color_mode = "Prot."
+block_style = "Thick"
+
+[gameplay]
+das_delay_ms = 167
+arr_ms = 33

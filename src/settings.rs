@@ -1,4 +1,5 @@
-use std::io::Stdout;
+use std::io::Write;
+use std::time::Duration;
 use crossterm::{
     cursor::MoveTo,
     event::KeyCode,
@@ -6,10 +7,10 @@ use crossterm::{
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
 };
 use serde::{Deserialize, Serialize};
-use crate::render::{ColorMode, RenderLayout, LOWER_BORDER, UPPER_BORDER, VERT_BORDER};
+use crate::render::{RenderLayout, LOWER_BORDER, UPPER_BORDER, VERT_BORDER};
 
 const SETTINGS_PATH: &str = "settings.toml";
-const KEYBIND_COUNT: usize = 8;
+const KEYBIND_COUNT: usize = 9;
 
 #[derive(Serialize, Deserialize)]
 pub struct KeyBindings {
@@ -18,6 +19,7 @@ pub struct KeyBindings {
     pub move_down: String,
     pub rotate_left: String,
     pub rotate_right: String,
+    pub rotate_180: String,
     pub hard_drop: String,
     pub hold: String,
     pub pause: String,
@@ -25,13 +27,20 @@ pub struct KeyBindings {
 
 #[derive(Serialize, Deserialize)]
 pub struct DisplaySettings {
-    pub color_mode: String,
+    pub block_style: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GameplaySettings {
+    pub das_delay_ms: u64,
+    pub arr_ms: u64,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub keys: KeyBindings,
     pub display: DisplaySettings,
+    pub gameplay: GameplaySettings,
 }
 
 impl Default for Settings {
@@ -43,12 +52,17 @@ impl Default for Settings {
                 move_down: "Down".to_string(),
                 rotate_left: "a".to_string(),
                 rotate_right: "d".to_string(),
+                rotate_180: "w".to_string(),
                 hard_drop: "Space".to_string(),
                 hold: "c".to_string(),
                 pause: "Escape".to_string(),
             },
             display: DisplaySettings {
-                color_mode: "Normal".to_string(),
+                block_style: "Solid".to_string(),
+            },
+            gameplay: GameplaySettings {
+                das_delay_ms: 160,
+                arr_ms: 30,
             },
         }
     }
@@ -71,12 +85,19 @@ impl Settings {
         std::fs::write(SETTINGS_PATH, contents)
     }
 
-    pub fn color_mode(&self) -> ColorMode {
-        match self.display.color_mode.as_str() {
-            "Deut." => ColorMode::Deuteranopia,
-            "Prot." => ColorMode::Protanopia,
-            "Trit." => ColorMode::Tritanopia,
-            _ => ColorMode::Normal,
+    pub fn das_delay(&self) -> Duration {
+        Duration::from_millis(self.gameplay.das_delay_ms)
+    }
+
+    pub fn arr_interval(&self) -> Duration {
+        Duration::from_millis(self.gameplay.arr_ms)
+    }
+
+    pub fn block_str(&self) -> &'static str {
+        match self.display.block_style.as_str() {
+            "Blocks" => "[]",
+            "Thick" => "⟦⟧",
+            _ => "██",
         }
     }
 }
@@ -113,7 +134,7 @@ pub fn string_to_keycode(s: &str) -> Option<KeyCode> {
     }
 }
 
-fn key_display(binding: &str) -> String {
+pub fn key_display(binding: &str) -> String {
     match binding {
         "Left" => "←".to_string(),
         "Right" => "→".to_string(),
@@ -129,12 +150,11 @@ fn key_display(binding: &str) -> String {
     }
 }
 
-fn next_color_mode(current: &str) -> String {
+fn next_block_style(current: &str) -> String {
     match current {
-        "Normal" => "Deut.".to_string(),
-        "Deut." => "Prot.".to_string(),
-        "Prot." => "Trit.".to_string(),
-        _ => "Normal".to_string(),
+        "Solid" => "Blocks".to_string(),
+        "Blocks" => "Thick".to_string(),
+        _ => "Solid".to_string(),
     }
 }
 
@@ -166,9 +186,10 @@ impl SettingsScreen {
                 2 => settings.keys.move_down = key_str,
                 3 => settings.keys.rotate_left = key_str,
                 4 => settings.keys.rotate_right = key_str,
-                5 => settings.keys.hard_drop = key_str,
-                6 => settings.keys.hold = key_str,
-                7 => settings.keys.pause = key_str,
+                5 => settings.keys.rotate_180 = key_str,
+                6 => settings.keys.hard_drop = key_str,
+                7 => settings.keys.hold = key_str,
+                8 => settings.keys.pause = key_str,
                 _ => {}
             }
             let _ = settings.save();
@@ -186,15 +207,33 @@ impl SettingsScreen {
                 }
             }
             KeyCode::Down => {
-                if self.selected < KEYBIND_COUNT {
+                if self.selected < KEYBIND_COUNT + 2 {
                     self.selected += 1;
                 }
             }
             KeyCode::Enter => {
                 if self.selected < KEYBIND_COUNT {
                     self.rebinding = true;
-                } else {
-                    settings.display.color_mode = next_color_mode(&settings.display.color_mode);
+                } else if self.selected == KEYBIND_COUNT {
+                    settings.display.block_style = next_block_style(&settings.display.block_style);
+                    let _ = settings.save();
+                }
+            }
+            KeyCode::Left => {
+                if self.selected == KEYBIND_COUNT + 1 {
+                    settings.gameplay.das_delay_ms = settings.gameplay.das_delay_ms.saturating_sub(10);
+                    let _ = settings.save();
+                } else if self.selected == KEYBIND_COUNT + 2 {
+                    settings.gameplay.arr_ms = settings.gameplay.arr_ms.saturating_sub(10);
+                    let _ = settings.save();
+                }
+            }
+            KeyCode::Right => {
+                if self.selected == KEYBIND_COUNT + 1 {
+                    settings.gameplay.das_delay_ms = (settings.gameplay.das_delay_ms + 10).min(500);
+                    let _ = settings.save();
+                } else if self.selected == KEYBIND_COUNT + 2 {
+                    settings.gameplay.arr_ms = (settings.gameplay.arr_ms + 10).min(500);
                     let _ = settings.save();
                 }
             }
@@ -204,14 +243,14 @@ impl SettingsScreen {
 
     pub fn draw(
         &self,
-        stdout: &mut Stdout,
+        stdout: &mut impl Write,
         settings: &Settings,
         term_width: u16,
         term_height: u16,
         _layout: &RenderLayout,
     ) -> std::io::Result<()> {
         let border_width: u16 = 30;
-        let border_height: u16 = 15;
+        let border_height: u16 = KEYBIND_COUNT as u16 + 11;
         let inner = (border_width - 2) as usize;
 
         let start_x = term_width / 2 - border_width / 2;
@@ -223,6 +262,7 @@ impl SettingsScreen {
             "Move Down",
             "Rotate Left",
             "Rotate Right",
+            "Rotate 180",
             "Hard Drop",
             "Hold",
             "Pause",
@@ -234,6 +274,7 @@ impl SettingsScreen {
             settings.keys.move_down.as_str(),
             settings.keys.rotate_left.as_str(),
             settings.keys.rotate_right.as_str(),
+            settings.keys.rotate_180.as_str(),
             settings.keys.hard_drop.as_str(),
             settings.keys.hold.as_str(),
             settings.keys.pause.as_str(),
@@ -299,9 +340,18 @@ impl SettingsScreen {
                 let blank = format!("{:<width$}", "", width = inner);
                 queue!(stdout, MoveTo(ix, by), Print(blank))?;
             } else if item_y == KEYBIND_COUNT + 1 {
-                let mode_str = &settings.display.color_mode;
-                let line = format!(" {:<14}[ {:<6} ] ", "Color Mode", mode_str);
-                let padded = format!("{:<width$}", line, width = inner);
+                let header = format!("{:^width$}", "── DISPLAY ──", width = inner);
+                queue!(
+                    stdout,
+                    MoveTo(ix, by),
+                    SetForegroundColor(Color::Rgb { r: 120, g: 120, b: 120 }),
+                    Print(header),
+                    ResetColor
+                )?;
+            } else if item_y == KEYBIND_COUNT + 2 {
+                let style_str = &settings.display.block_style;
+                let line = format!("Block Style [ {:^6} ]", style_str);
+                let padded = format!("{:^width$}", line, width = inner);
 
                 if self.selected == KEYBIND_COUNT {
                     queue!(
@@ -314,7 +364,34 @@ impl SettingsScreen {
                 } else {
                     queue!(stdout, MoveTo(ix, by), Print(padded))?;
                 }
-            } else if item_y == 12 {
+            } else if item_y == KEYBIND_COUNT + 4 {
+                let header = format!("{:^width$}", "── GAMEPLAY ──", width = inner);
+                queue!(
+                    stdout,
+                    MoveTo(ix, by),
+                    SetForegroundColor(Color::Rgb { r: 120, g: 120, b: 120 }),
+                    Print(header),
+                    ResetColor
+                )?;
+            } else if item_y == KEYBIND_COUNT + 5 {
+                let value = format!("{:>4}ms", settings.gameplay.das_delay_ms);
+                let line = format!("DAS Delay   [ {:^6} ]", value);
+                let padded = format!("{:^width$}", line, width = inner);
+                if self.selected == KEYBIND_COUNT + 1 {
+                    queue!(stdout, MoveTo(ix, by), SetBackgroundColor(Color::Rgb { r: 40, g: 40, b: 40 }), Print(padded), ResetColor)?;
+                } else {
+                    queue!(stdout, MoveTo(ix, by), Print(padded))?;
+                }
+            } else if item_y == KEYBIND_COUNT + 6 {
+                let value = format!("{:>4}ms", settings.gameplay.arr_ms);
+                let line = format!("ARR Speed   [ {:^6} ]", value);
+                let padded = format!("{:^width$}", line, width = inner);
+                if self.selected == KEYBIND_COUNT + 2 {
+                    queue!(stdout, MoveTo(ix, by), SetBackgroundColor(Color::Rgb { r: 40, g: 40, b: 40 }), Print(padded), ResetColor)?;
+                } else {
+                    queue!(stdout, MoveTo(ix, by), Print(padded))?;
+                }
+            } else if item_y == KEYBIND_COUNT + 8 {
                 let saved = format!("{:^width$}", "auto-saved", width = inner);
                 queue!(
                     stdout,

@@ -1,4 +1,4 @@
-use std::io::Stdout;
+use std::io::Write;
 use std::time::{Duration, Instant};
 use crossterm::{
     cursor::MoveTo,
@@ -11,14 +11,21 @@ use crate::tetromino::{ActiveTetromino, Grid, TetrominoBag, TetrominoBuffer, Tet
 pub struct Timings {
     pub drop_interval: Duration,
     pub lock_delay: Duration,
+    pub clear_animation_duration: Duration,
 }
 
 impl Timings {
     pub fn init() -> Self {
         Self {
             drop_interval: Duration::from_millis(1500),
-            lock_delay: Duration::from_millis(750),
+            lock_delay: Duration::from_millis(1000),
+            clear_animation_duration: Duration::from_millis(400),
         }
+    }
+
+    pub fn recalculate(&mut self, level: u16) {
+        let halvings = (level / 10) as u32;
+        self.drop_interval = Duration::from_millis(1500 >> halvings);
     }
 }
 
@@ -73,7 +80,7 @@ impl Progress {
 
     pub fn draw(
         &self,
-        stdout: &mut Stdout,
+        stdout: &mut impl Write,
         elapsed: Duration,
         layout: &RenderLayout,
     ) -> std::io::Result<()> {
@@ -160,6 +167,13 @@ fn format_time(elapsed: Duration) -> String {
     }
 }
 
+pub struct LineClearAnimation {
+    pub rows: Vec<u16>,
+    pub center_column: i32,
+    pub started_at: Instant,
+    pub duration: Duration,
+}
+
 pub struct Game {
     pub grid: Grid,
     pub bag: TetrominoBag,
@@ -172,6 +186,7 @@ pub struct Game {
     pub last_drop: Instant,
     pub game_start: Instant,
     pub last_clear: Option<(Instant, u16, u32)>,
+    pub clearing: Option<LineClearAnimation>,
 }
 
 impl Game {
@@ -191,28 +206,48 @@ impl Game {
             last_drop: Instant::now(),
             game_start: Instant::now(),
             last_clear: None,
+            clearing: None,
         }
     }
 
-    pub fn lock_and_advance(&mut self) {
+    pub fn lock_and_start_clear(&mut self, clear_duration: Duration) {
         self.grid.lock_piece(&self.active);
-        self.destroy_lines();
+        let full_rows = self.grid.find_full_rows();
+        if full_rows.is_empty() {
+            self.active.slot(&mut self.queue, &mut self.bag);
+            self.grounded_since = None;
+            self.has_swapped = false;
+        } else {
+            let center_column = self.active.x + 1;
+            self.clearing = Some(LineClearAnimation {
+                rows: full_rows,
+                center_column,
+                started_at: Instant::now(),
+                duration: clear_duration,
+            });
+        }
+    }
+
+    pub fn finish_clear(&mut self) {
+        let rows = if let Some(ref anim) = self.clearing {
+            anim.rows.clone()
+        } else {
+            return;
+        };
+        let lines = self.grid.remove_rows(&rows);
+        let pts = self.progress.increase(lines);
+        if lines > 0 {
+            self.last_clear = Some((Instant::now(), lines, pts));
+        }
+        self.clearing = None;
         self.active.slot(&mut self.queue, &mut self.bag);
         self.grounded_since = None;
         self.has_swapped = false;
     }
 
-    pub fn hard_drop(&mut self) {
+    pub fn hard_drop(&mut self, clear_duration: Duration) {
         self.active.fall(&self.grid);
-        self.lock_and_advance();
+        self.lock_and_start_clear(clear_duration);
         self.last_drop = Instant::now();
-    }
-
-    fn destroy_lines(&mut self) {
-        let lines = self.grid.destroy_lines();
-        let pts = self.progress.increase(lines);
-        if lines > 0 {
-            self.last_clear = Some((Instant::now(), lines, pts));
-        }
     }
 }

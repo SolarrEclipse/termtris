@@ -303,12 +303,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "ran"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ec3b34b7476ace56430f442988b1faca754c3f05932f4d32a3a6cb7367f25f8"
-
-[[package]]
 name = "rand"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,7 +467,6 @@ name = "termtris"
 version = "0.1.0"
 dependencies = [
  "crossterm",
- "ran",
  "rand",
  "serde",
  "toml",
