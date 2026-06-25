@@ -1,2 +1,1 @@
-# TErminalTRIS
-> Learning Crossterm making Tetris.
+# Tetris in the terminal
