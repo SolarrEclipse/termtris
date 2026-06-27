@@ -7,7 +7,7 @@ use std::io::{BufWriter, Write, stdout};
 use std::time::{Duration, Instant};
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     queue,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
@@ -16,36 +16,6 @@ use game::{Game, Timings};
 use render::{ControlCenter, GameOverScreen, RenderLayout, draw_controls, draw_notification};
 use settings::{Settings, SettingsScreen, key_display, string_to_keycode};
 use tetromino::{ActiveTetromino, RotationDirection};
-
-#[derive(Clone, Copy, PartialEq)]
-enum HorizontalDirection {
-    Left,
-    Right,
-}
-
-struct DasState {
-    direction: Option<HorizontalDirection>,
-    das_started_at: Instant,
-    arr_last_at: Option<Instant>,
-}
-
-impl DasState {
-    fn new() -> Self {
-        Self {
-            direction: None,
-            das_started_at: Instant::now(),
-            arr_last_at: None,
-        }
-    }
-
-    fn set_direction(&mut self, dir: Option<HorizontalDirection>) {
-        if self.direction != dir {
-            self.direction = dir;
-            self.das_started_at = Instant::now();
-            self.arr_last_at = None;
-        }
-    }
-}
 
 fn main() -> std::io::Result<()> {
     terminal::enable_raw_mode()?;
@@ -68,17 +38,6 @@ fn run() -> std::io::Result<()> {
     let mut last_game_over = false;
 
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
-
-    let supports_enhancement = execute!(stdout, PushKeyboardEnhancementFlags(
-        KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-    )).is_ok();
-
-    let mut left_held = false;
-    let mut right_held = false;
-    let mut left_last_event: Option<Instant> = None;
-    let mut right_last_event: Option<Instant> = None;
-    let mut last_horizontal: Option<HorizontalDirection> = None;
-    let mut das_state = DasState::new();
 
     loop {
         let paused = control.open || settings_screen.open || game_over_screen.active;
@@ -160,10 +119,6 @@ fn run() -> std::io::Result<()> {
                                 control.open = false;
                                 game.last_drop = Instant::now();
                                 game.grounded_since = None;
-                                left_held = false;
-                                right_held = false;
-                                last_horizontal = None;
-                                das_state.set_direction(None);
                             }
                             KeyCode::Up => {
                                 if control.selected == 0 {
@@ -180,10 +135,6 @@ fn run() -> std::io::Result<()> {
                                     control.open = false;
                                     game.last_drop = Instant::now();
                                     game.grounded_since = None;
-                                    left_held = false;
-                                    right_held = false;
-                                    last_horizontal = None;
-                                    das_state.set_direction(None);
                                 }
                                 1 => {}
                                 2 => {
@@ -204,48 +155,13 @@ fn run() -> std::io::Result<()> {
                     let is_right = Some(k) == right_key;
 
                     if is_left || is_right {
-                        let dir = if is_left { HorizontalDirection::Left } else { HorizontalDirection::Right };
-                        match key.kind {
-                            KeyEventKind::Press => {
-                                let was_held = if is_left { left_held } else { right_held };
+                        if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
+                            if game.clearing.is_none() {
                                 if is_left {
-                                    left_held = true;
-                                    left_last_event = Some(Instant::now());
+                                    game.active.move_left(&game.grid);
                                 } else {
-                                    right_held = true;
-                                    right_last_event = Some(Instant::now());
+                                    game.active.move_right(&game.grid);
                                 }
-                                last_horizontal = Some(dir);
-                                if !was_held && game.clearing.is_none() {
-                                    if is_left {
-                                        game.active.move_left(&game.grid);
-                                    } else {
-                                        game.active.move_right(&game.grid);
-                                    }
-                                    das_state.set_direction(Some(dir));
-                                }
-                            }
-                            KeyEventKind::Repeat => {
-                                if is_left {
-                                    left_last_event = Some(Instant::now());
-                                } else {
-                                    right_last_event = Some(Instant::now());
-                                }
-                            }
-                            KeyEventKind::Release => {
-                                if is_left {
-                                    left_held = false;
-                                } else {
-                                    right_held = false;
-                                }
-                                last_horizontal = if !is_left && left_held {
-                                    Some(HorizontalDirection::Left)
-                                } else if is_left && right_held {
-                                    Some(HorizontalDirection::Right)
-                                } else {
-                                    None
-                                };
-                                das_state.set_direction(last_horizontal);
                             }
                         }
                     } else if key.kind == KeyEventKind::Press {
@@ -288,44 +204,6 @@ fn run() -> std::io::Result<()> {
 
         if should_quit {
             break;
-        }
-
-        // DAS/ARR: apply horizontal movement while key held
-        if !paused && game.clearing.is_none() {
-            if !supports_enhancement {
-                let held_timeout = Duration::from_millis(150);
-                let new_left = left_last_event.map(|t| t.elapsed() < held_timeout).unwrap_or(false);
-                let new_right = right_last_event.map(|t| t.elapsed() < held_timeout).unwrap_or(false);
-                if !new_left && !new_right {
-                    last_horizontal = None;
-                }
-                left_held = new_left;
-                right_held = new_right;
-            }
-
-            let current_direction = match (left_held, right_held) {
-                (true, false) => Some(HorizontalDirection::Left),
-                (false, true) => Some(HorizontalDirection::Right),
-                (true, true) => last_horizontal,
-                _ => None,
-            };
-
-            das_state.set_direction(current_direction);
-
-            if let Some(dir) = das_state.direction {
-                if das_state.das_started_at.elapsed() >= settings.das_delay() {
-                    let should_move = das_state.arr_last_at
-                        .map(|t| t.elapsed() >= settings.arr_interval())
-                        .unwrap_or(true);
-                    if should_move {
-                        match dir {
-                            HorizontalDirection::Left => { game.active.move_left(&game.grid); }
-                            HorizontalDirection::Right => { game.active.move_right(&game.grid); }
-                        }
-                        das_state.arr_last_at = Some(Instant::now());
-                    }
-                }
-            }
         }
 
         if !paused && game.clearing.is_none() {
@@ -394,9 +272,6 @@ fn run() -> std::io::Result<()> {
         stdout.flush()?;
     }
 
-    if supports_enhancement {
-        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-    }
     execute!(stdout, LeaveAlternateScreen, cursor::Show)?;
 
     Ok(())

@@ -11,7 +11,3 @@ pause = "Escape"
 
 [display]
 block_style = "Thick"
-
-[gameplay]
-das_delay_ms = 167
-arr_ms = 33

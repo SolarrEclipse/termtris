@@ -1,5 +1,4 @@
 use std::io::Write;
-use std::time::Duration;
 use crossterm::{
     cursor::MoveTo,
     event::KeyCode,
@@ -31,16 +30,9 @@ pub struct DisplaySettings {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GameplaySettings {
-    pub das_delay_ms: u64,
-    pub arr_ms: u64,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub keys: KeyBindings,
     pub display: DisplaySettings,
-    pub gameplay: GameplaySettings,
 }
 
 impl Default for Settings {
@@ -59,10 +51,6 @@ impl Default for Settings {
             },
             display: DisplaySettings {
                 block_style: "Solid".to_string(),
-            },
-            gameplay: GameplaySettings {
-                das_delay_ms: 160,
-                arr_ms: 30,
             },
         }
     }
@@ -83,14 +71,6 @@ impl Settings {
         let contents = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(SETTINGS_PATH, contents)
-    }
-
-    pub fn das_delay(&self) -> Duration {
-        Duration::from_millis(self.gameplay.das_delay_ms)
-    }
-
-    pub fn arr_interval(&self) -> Duration {
-        Duration::from_millis(self.gameplay.arr_ms)
     }
 
     pub fn block_str(&self) -> &'static str {
@@ -207,7 +187,7 @@ impl SettingsScreen {
                 }
             }
             KeyCode::Down => {
-                if self.selected < KEYBIND_COUNT + 2 {
+                if self.selected < KEYBIND_COUNT {
                     self.selected += 1;
                 }
             }
@@ -216,24 +196,6 @@ impl SettingsScreen {
                     self.rebinding = true;
                 } else if self.selected == KEYBIND_COUNT {
                     settings.display.block_style = next_block_style(&settings.display.block_style);
-                    let _ = settings.save();
-                }
-            }
-            KeyCode::Left => {
-                if self.selected == KEYBIND_COUNT + 1 {
-                    settings.gameplay.das_delay_ms = settings.gameplay.das_delay_ms.saturating_sub(10);
-                    let _ = settings.save();
-                } else if self.selected == KEYBIND_COUNT + 2 {
-                    settings.gameplay.arr_ms = settings.gameplay.arr_ms.saturating_sub(10);
-                    let _ = settings.save();
-                }
-            }
-            KeyCode::Right => {
-                if self.selected == KEYBIND_COUNT + 1 {
-                    settings.gameplay.das_delay_ms = (settings.gameplay.das_delay_ms + 10).min(500);
-                    let _ = settings.save();
-                } else if self.selected == KEYBIND_COUNT + 2 {
-                    settings.gameplay.arr_ms = (settings.gameplay.arr_ms + 10).min(500);
                     let _ = settings.save();
                 }
             }
@@ -250,7 +212,7 @@ impl SettingsScreen {
         _layout: &RenderLayout,
     ) -> std::io::Result<()> {
         let border_width: u16 = 30;
-        let border_height: u16 = KEYBIND_COUNT as u16 + 11;
+        let border_height: u16 = KEYBIND_COUNT as u16 + 6;
         let inner = (border_width - 2) as usize;
 
         let start_x = term_width / 2 - border_width / 2;
@@ -365,33 +327,6 @@ impl SettingsScreen {
                     queue!(stdout, MoveTo(ix, by), Print(padded))?;
                 }
             } else if item_y == KEYBIND_COUNT + 4 {
-                let header = format!("{:^width$}", "── GAMEPLAY ──", width = inner);
-                queue!(
-                    stdout,
-                    MoveTo(ix, by),
-                    SetForegroundColor(Color::Rgb { r: 120, g: 120, b: 120 }),
-                    Print(header),
-                    ResetColor
-                )?;
-            } else if item_y == KEYBIND_COUNT + 5 {
-                let value = format!("{:>4}ms", settings.gameplay.das_delay_ms);
-                let line = format!("DAS Delay   [ {:^6} ]", value);
-                let padded = format!("{:^width$}", line, width = inner);
-                if self.selected == KEYBIND_COUNT + 1 {
-                    queue!(stdout, MoveTo(ix, by), SetBackgroundColor(Color::Rgb { r: 40, g: 40, b: 40 }), Print(padded), ResetColor)?;
-                } else {
-                    queue!(stdout, MoveTo(ix, by), Print(padded))?;
-                }
-            } else if item_y == KEYBIND_COUNT + 6 {
-                let value = format!("{:>4}ms", settings.gameplay.arr_ms);
-                let line = format!("ARR Speed   [ {:^6} ]", value);
-                let padded = format!("{:^width$}", line, width = inner);
-                if self.selected == KEYBIND_COUNT + 2 {
-                    queue!(stdout, MoveTo(ix, by), SetBackgroundColor(Color::Rgb { r: 40, g: 40, b: 40 }), Print(padded), ResetColor)?;
-                } else {
-                    queue!(stdout, MoveTo(ix, by), Print(padded))?;
-                }
-            } else if item_y == KEYBIND_COUNT + 8 {
                 let saved = format!("{:^width$}", "auto-saved", width = inner);
                 queue!(
                     stdout,

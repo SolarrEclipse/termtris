@@ -228,7 +228,6 @@ impl TetrominoQueue {
     ) -> std::io::Result<()> {
         let border_width = 14u16;
         let border_height = 20u16;
-        let interior_width = (border_width - 2) as usize;
 
         let title = " NEXT ";
         let title_x = layout.queue_start_x + (border_width - title.len() as u16) / 2;
@@ -248,25 +247,47 @@ impl TetrominoQueue {
             let screen_y = y + layout.queue_start_y;
             if y == border_height - 1 {
                 queue!(stdout, MoveTo(layout.queue_start_x, screen_y), Print(LOWER_BORDER.repeat(border_width as usize)))?;
-            } else {
-                queue!(stdout, MoveTo(layout.queue_start_x, screen_y), Print(VERT_BORDER))?;
-                queue!(stdout, MoveTo(layout.queue_start_x + 1, screen_y), Print(format!("{:width$}", "", width = interior_width)))?;
-                queue!(stdout, MoveTo(layout.queue_start_x + border_width - 1, screen_y), Print(VERT_BORDER))?;
+                continue;
             }
-        }
 
-        for (i, piece) in self.tetrominos.iter().enumerate() {
-            let y_offset = i as u16 * 4;
-            for (block_x, block_y) in piece.kind.blocks(0) {
-                let screen_x = layout.queue_start_x + block_x as u16 * layout.cell_width + border_width / 4;
-                let screen_y = layout.queue_start_y + block_y as u16 * CELL_HEIGHT + y_offset + self.size / 2 + CELL_HEIGHT;
-                queue!(
-                    stdout,
-                    MoveTo(screen_x, screen_y),
-                    SetForegroundColor(piece.kind.color()),
-                    Print(block),
-                    ResetColor
-                )?;
+            queue!(stdout, MoveTo(layout.queue_start_x, screen_y), Print(VERT_BORDER))?;
+            queue!(stdout, MoveTo(layout.queue_start_x + border_width - 1, screen_y), Print(VERT_BORDER))?;
+
+            let mut skip_x: Option<u16> = None;
+            for x in 1..border_width - 1 {
+                let screen_x = x + layout.queue_start_x;
+                if skip_x == Some(x) {
+                    skip_x = None;
+                    continue;
+                }
+
+                let mut drew_block = false;
+                for (i, piece) in self.tetrominos.iter().enumerate() {
+                    let y_offset = i as u16 * 4;
+                    for (block_x, block_y) in piece.kind.blocks(0) {
+                        let queue_x = block_x as u16 * layout.cell_width + border_width / 4;
+                        let queue_y = block_y as u16 * CELL_HEIGHT + y_offset + self.size / 2 + CELL_HEIGHT;
+                        if queue_x == x && queue_y == y {
+                            queue!(
+                                stdout,
+                                MoveTo(screen_x, screen_y),
+                                SetForegroundColor(piece.kind.color()),
+                                Print(block),
+                                ResetColor
+                            )?;
+                            skip_x = Some(x + 1);
+                            drew_block = true;
+                            break;
+                        }
+                    }
+                    if drew_block {
+                        break;
+                    }
+                }
+
+                if !drew_block {
+                    queue!(stdout, MoveTo(screen_x, screen_y), Print(" "))?;
+                }
             }
         }
 
